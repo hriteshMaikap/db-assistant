@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text, inspect
 from agno.agent import Agent
 from agno.models.groq import Groq
+import seaborn as sns
+import matplotlib.pyplot as plt
+import json
 
 # Load environment
 load_dotenv()
@@ -318,6 +321,74 @@ def sql_db_query(query):
         
         return error_msg + context
 
+def create_pie_chart(data_input):
+    """Create and save a pie chart as PNG using seaborn/matplotlib."""
+    global latest_query_result, latest_query_columns
+    if not latest_query_result or not latest_query_columns:
+        return "Error: No query results available. Please run a SQL query first."
+    try:
+        cfg = json.loads(data_input)
+        title = cfg.get('title', 'Pie Chart')
+        labels_col = cfg.get('labels_column')
+        values_col = cfg.get('values_column')
+        if not labels_col or not values_col:
+            return f"Error: 'labels_column' and 'values_column' required. Available: {', '.join(latest_query_columns)}"
+        idx_l = list(latest_query_columns).index(labels_col)
+        idx_v = list(latest_query_columns).index(values_col)
+        labels = [row[idx_l] for row in latest_query_result]
+        vals = [float(row[idx_v]) for row in latest_query_result]
+        plt.figure(figsize=(8,6))
+        plt.pie(vals, labels=labels, autopct='%1.1f%%')
+        plt.title(title)
+        png = 'pie_chart.png'
+        plt.savefig(png)
+        plt.close()
+        return f"Pie chart saved as '{png}'."
+    except Exception as e:
+        return f"Error creating pie chart: {str(e)}"
+
+def create_bar_chart(data_input):
+    """Create and save a bar chart as PNG using seaborn/matplotlib."""
+    global latest_query_result, latest_query_columns
+    try:
+        cfg = json.loads(data_input)
+        title = cfg.get('title', 'Bar Chart')
+        # If direct arrays provided, use them
+        if 'labels' in cfg and 'values' in cfg:
+            labels = cfg['labels']
+            vals = cfg['values']
+            plt.figure(figsize=(10,6))
+            sns.barplot(x=labels, y=vals)
+            plt.xlabel('')
+            plt.ylabel('')
+            plt.title(title)
+            png = 'bar_chart.png'
+            plt.savefig(png)
+            plt.close()
+            return f"Bar chart saved as '{png}' using provided data."
+        # Otherwise use latest query results
+        if not latest_query_result or not latest_query_columns:
+            return "Error: No query results available. Please run a SQL query first."
+        x_col = cfg.get('x_column')
+        y_col = cfg.get('y_column')
+        if not x_col or not y_col:
+            return f"Error: 'x_column' and 'y_column' required. Available: {', '.join(latest_query_columns)}"
+        idx_x = list(latest_query_columns).index(x_col)
+        idx_y = list(latest_query_columns).index(y_col)
+        x = [row[idx_x] for row in latest_query_result]
+        y = [float(row[idx_y]) for row in latest_query_result]
+        plt.figure(figsize=(10,6))
+        sns.barplot(x=x, y=y)
+        plt.xlabel(x_col)
+        plt.ylabel(y_col)
+        plt.title(title)
+        png = 'bar_chart.png'
+        plt.savefig(png)
+        plt.close()
+        return f"Bar chart saved as '{png}' using query results."
+    except Exception as e:
+        return f"Error creating bar chart: {str(e)}"
+
 def get_db_capabilities():
     """Get information about the database capabilities and limitations.
     
@@ -389,48 +460,74 @@ tools = [
     sql_db_schema,
     sql_db_query_checker,
     sql_db_query,
-    get_db_capabilities
+    get_db_capabilities,
+    create_pie_chart,
+    create_bar_chart
 ]
 
 # --- 6. Agent instructions ---
 instructions = [
-    "You are an agent designed to interact with a SQL database",
-    "When given a question, follow these steps:",
-    "1. ALWAYS start by listing the tables in the database using sql_db_list_tables.",
-    "2. ALWAYS take schema of all tables using sql_db_schema and check schema of tables relevant to user query before writing any SQL.",
-    "3. Write SQL queries that relate ONLY to tables and columns that actually exist in the database.",
-    "4. Validate your SQL query using sql_db_query_checker before executing.",
-    "5. Execute the query with sql_db_query."
-    "",
-    "CRITICAL RULES:",
-    "- NEVER mention or use tables that don't exist in the database.",
-    "- ALWAYS use table names EXACTLY as they appear in sql_db_list_tables.",
-    "-ALWAYS use attributes names EXACTLY as they appear in sql_db_schema and they should be relevant to user query.",
-    "- Use ONLY column names that appear in the table schemas.",
-    "- NEVER make up column names or table names that don't exist.",
-    "- Unless the user specifies a specific number of examples, always LIMIT results to 5.",
-    "- Order results by a relevant column if possible to return the most interesting examples.",
-    "- Never SELECT * — only include relevant columns for the question.",
-    "- Do NOT make any DML statements (INSERT, UPDATE, DELETE, DROP, etc).",
-    "- If unsure about database functions or syntax, use get_db_capabilities to check what's supported.",
-    "",
-    "Visualization capabilities:",
-    "- in development,"
-    "",
-    "Error handling:",
-    "- If a table or column doesn't exist, clearly explain which ones are invalid.",
-    "- If a query fails, analyze the error and suggest corrections.",
-    "- If the user request is beyond the capability of the database, explain why and suggest alternatives.",
-    "",
-    f"Complete database context: {database_context}"
+     "You are an agent designed to interact with a SQL database and create visualizations.",
+        "When given a question, follow these steps:",
+        "1. ALWAYS start by listing the tables in the database using sql_db_list_tables.",
+        "2. ALWAYS check schema of relevant tables using sql_db_schema before writing any SQL.",
+        "3. Write SQL queries that relate ONLY to tables and columns that actually exist in the database.",
+        "4. Validate your SQL query using sql_db_query_checker before executing.",
+        "5. Execute the query with sql_db_query."
+        "",
+        "CRITICAL RULES:",
+        "- NEVER mention or use tables that don't exist in the database.",
+        "- ALWAYS use table names EXACTLY as they appear in sql_db_list_tables.",
+        "- Use ONLY column names that appear in the table schemas.",
+        "- NEVER make up column names or table names that don't exist.",
+        "- Unless the user specifies a specific number of examples, always LIMIT results to 5.",
+        "- Order results by a relevant column if possible to return the most interesting examples.",
+        "- Never SELECT * — only include relevant columns for the question.",
+        "- Do NOT make any DML statements (INSERT, UPDATE, DELETE, DROP, etc).",
+        "- If unsure about database functions or syntax, use get_db_capabilities to check what's supported.",
+        "",        "Visualization capabilities:",
+        "- Use create_pie_chart with a JSON configuration to create pie charts from query results.",
+        "- Use create_bar_chart with a JSON configuration to create bar charts from query results or direct data arrays.",
+        "- For pie charts, provide 'title', 'labels_column', and 'values_column' in the JSON configuration.",
+        "- For bar charts using query results, provide 'title', 'x_column', and 'y_column' in the JSON configuration.",
+        "- For bar charts with direct data, provide 'title', 'labels' (array), and 'values' (array) in the JSON configuration.",
+        "- Always run a SQL query first before creating visualizations from query results."
+        "",
+        "Error handling:",
+        "- If a table or column doesn't exist, clearly explain which ones are invalid.",
+        "- If a query fails, analyze the error and suggest corrections.",
+        "- If the user request is beyond the capability of the database, explain why and suggest alternatives.",
+        "",
+        "Return format: ",
+        "-The reasoning or the thought process behind the query.",
+        "-A small summary in 2 lines about the query result.",
+        "-The output from the SQL query in a table format as shown below",
+        "-It may be possible to create a visualization from the query result. If so, just say image has been generated",
+        "-There may be a case where all of these are not possible, but try to generate as much as similar to the return format as possible.",
+        """
+        Here is a sample output format:
+
+        <Result from SQL>
+        +----------------+-------------+
+        | category       | total_sales |
+        +----------------+-------------+
+        | Books          |     6229990 |
+        | Clothing       |     5745085 |
+        | Smartphones    |     4149426 |
+        | Laptops        |     3175717 |
+        | Home & Kitchen |     2027246 |
+        +----------------+-------------+
+        """
+        f"Complete database context: {database_context}"
 ]
 
 # --- 7. Initialize and run the AGNO Agent ---
 try:
     agent = Agent(
-        model=Groq(id="llama-3.1-8b-instant", api_key=groq_api_key),
+        model=Groq(id="llama-3.3-70b-versatile", api_key=groq_api_key),
         tools=tools,
         instructions=instructions,
+        reasoning=True,
         markdown=True,
         show_tool_calls=True,
         add_datetime_to_instructions=True,
@@ -456,9 +553,10 @@ try:
 
                     # Re-initialize the Agent with the new context
                     agent = Agent(
-                        model=Groq(id="llama-3.1-8b-instant", api_key=groq_api_key),
+                        model=Groq(id="llama-3.3-70b-versatile", api_key=groq_api_key),
                         tools=tools,
                         instructions=context_instructions,
+                        reasoning=True,
                         markdown=True,
                         show_tool_calls=True,
                         add_datetime_to_instructions=True,

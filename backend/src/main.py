@@ -22,9 +22,10 @@ def main():
 
     # Import modules dynamically to ensure database connection is available
     import src.tools.sql_tools as sql_tools
+    import src.tools.viz_tools as viz_tools
     
     # Add dependency injection for database connection to sql_tools
-    sql_tools_with_connection = create_tools_with_connection(sql_tools, engine, inspector)
+    sql_tools_with_connection = create_tools_with_connection(sql_tools, viz_tools, engine, inspector)
     
     # Build database context
     try:
@@ -67,9 +68,12 @@ def main():
     except Exception as e:
         safe_exit("Error in main loop", e, 1)
 
-def create_tools_with_connection(sql_tools_module, engine, inspector):
+def create_tools_with_connection(sql_tools_module, viz_tools_module, engine, inspector):
     """Create a wrapper class for sql_tools that injects engine and inspector parameters."""
     class SqlToolsWithConnection:
+        def __init__(self):
+            self.viz_tools = VizToolsWrapper()
+            
         def sql_db_list_tables(self, tool_input=None):
             return sql_tools_module.sql_db_list_tables(inspector, tool_input)
         
@@ -84,6 +88,13 @@ def create_tools_with_connection(sql_tools_module, engine, inspector):
         
         def get_db_capabilities(self):
             return sql_tools_module.get_db_capabilities(engine)
+    
+    class VizToolsWrapper:
+        def create_pie_chart(self, data_input):
+            return viz_tools_module.create_pie_chart(data_input)
+        
+        def create_bar_chart(self, data_input):
+            return viz_tools_module.create_bar_chart(data_input)
     
     return SqlToolsWithConnection()
 
