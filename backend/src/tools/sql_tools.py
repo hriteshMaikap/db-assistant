@@ -1,120 +1,16 @@
-import os
+"""
+SQL query tools for the database assistant.
+Provides functions for listing tables, getting schema, and executing queries.
+"""
 import re
-import sys
 import traceback
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text, inspect
-from agno.agent import Agent
-from agno.models.groq import Groq
+from sqlalchemy import text
 
-# Load environment
-load_dotenv()
-groq_api_key = os.getenv("GROQ_API_KEY")
-if not groq_api_key:
-    raise ValueError("GROQ_API_KEY not set in .env")
-
-# MySQL connection params
-MYSQL_USER = os.getenv("MYSQL_USER")
-MYSQL_PASS = os.getenv("MYSQL_PASS")
-MYSQL_HOST = os.getenv("MYSQL_HOST")
-MYSQL_PORT = os.getenv("MYSQL_PORT")
-MYSQL_DB   = os.getenv("MYSQL_DB")
-
-print(f"Connecting to MySQL: {MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB} as {MYSQL_USER}")
-
-# Create MySQL engine
-try:
-    engine = create_engine(
-        f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASS}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}"
-    )
-    
-    # Test the connection
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
-        print("MySQL connection successful!")
-except Exception as e:
-    print(f"MySQL connection error: {str(e)}")
-    print("Attempting to use SQLite instead...")
-    
-    # Fall back to SQLite if MySQL connection fails
-    try:
-        sqlite_path = os.path.join(os.path.dirname(__file__), "Chinook.db")
-        print(f"Looking for SQLite database at: {sqlite_path}")
-        
-        if os.path.exists(sqlite_path):
-            engine = create_engine(f"sqlite:///{sqlite_path}")
-            print("SQLite connection successful!")
-        else:
-            print(f"ERROR: SQLite database file not found at {sqlite_path}")
-            sys.exit(1)
-    except Exception as e:
-        print(f"SQLite connection error: {str(e)}")
-        sys.exit(1)
-
-# Inspector for database metadata
-try:
-    inspector = inspect(engine)
-    print(f"Database metadata inspection initialized")
-except Exception as e:
-    print(f"Error initializing inspector: {str(e)}")
-    traceback.print_exc()
-    sys.exit(1)
-
-# Global variables
+# Global variables to store query results
 latest_query_result = None
 latest_query_columns = None
-database_context = None  # Will store complete DB schema and sample data
 
-# --- Database Context Creation Functions ---
-
-def build_database_context():
-    """Build comprehensive database context with schema and sample data for all tables."""
-    global database_context
-    
-    try:
-        tables = inspector.get_table_names()
-        context_parts = []
-        
-        for table in tables:
-            try:
-                # Get schema
-                columns = inspector.get_columns(table)
-                col_lines = [
-                    f"{col['name']} {col['type']}{' PRIMARY KEY' if col.get('primary_key') else ''}"
-                    for col in columns
-                ]
-                create_sql = f"CREATE TABLE {table} (\n    " + ",\n    ".join(col_lines) + "\n)"
-                
-                # Get sample rows
-                with engine.connect() as conn:
-                    sample = conn.execute(text(f"SELECT * FROM {table} LIMIT 3")).fetchall()
-                    sample_str = ""
-                    if sample:
-                        colnames = [c["name"] for c in columns]
-                        sample_str += "SAMPLE DATA:\n"
-                        sample_str += "\t".join(colnames) + "\n"
-                        for row in sample:
-                            sample_str += "\t".join(str(val) for val in row) + "\n"
-                    else:
-                        sample_str += "(no data in table)\n"
-                
-                context_parts.append(f"TABLE: {table}\n{create_sql}\n{sample_str}")
-            except Exception as e:
-                print(f"Error building context for table {table}: {str(e)}")
-                context_parts.append(f"TABLE: {table} - Error retrieving schema: {str(e)}")
-        
-        database_context = "\n\n".join(context_parts)
-        print(f"Database context built successfully with {len(tables)} tables")
-    except Exception as e:
-        print(f"Error building database context: {str(e)}")
-        database_context = f"Error building database context: {str(e)}"
-
-# Build context on startup
-build_database_context()
-
-# --- 4. Define SQL Tools for AGNO Agent ---
-
-def sql_db_list_tables(tool_input=None):
+def sql_db_list_tables(inspector, tool_input=None):
     """List all tables in the database.
     
     This function returns all available tables in the connected database.
@@ -134,7 +30,7 @@ def sql_db_list_tables(tool_input=None):
         traceback.print_exc()
         return error_msg
 
-def sql_db_schema(table_names):
+def sql_db_schema(engine, inspector, table_names):
     """Get schema and sample data for specified tables.
     
     Args:
@@ -188,7 +84,7 @@ def sql_db_schema(table_names):
         traceback.print_exc()
         return error_msg
 
-def sql_db_query_checker(query):
+def sql_db_query_checker(engine, inspector, query):
     """Double-check and validate SQL query before execution.
     
     This function checks if the SQL query is valid, safe, and formatted correctly.
@@ -249,7 +145,7 @@ def sql_db_query_checker(query):
     # and potentially fix the query
     return f"```sql\n{query}\n```"
 
-def sql_db_query(query):
+def sql_db_query(engine, inspector, query):
     """Execute SQL query and return results.
     
     This function runs the SQL query against the database and returns the results.
@@ -318,7 +214,7 @@ def sql_db_query(query):
         
         return error_msg + context
 
-def get_db_capabilities():
+def get_db_capabilities(engine):
     """Get information about the database capabilities and limitations.
     
     This function returns details about the database type, supported functions,
@@ -383,94 +279,6 @@ Generic SQL capabilities available:
 - Joins: INNER JOIN, LEFT JOIN, RIGHT JOIN
 """
 
-# --- 5. Prepare the tools list ---
-tools = [
-    sql_db_list_tables,
-    sql_db_schema,
-    sql_db_query_checker,
-    sql_db_query,
-    get_db_capabilities
-]
-
-# --- 6. Agent instructions ---
-instructions = [
-    "You are an agent designed to interact with a SQL database",
-    "When given a question, follow these steps:",
-    "1. ALWAYS start by listing the tables in the database using sql_db_list_tables.",
-    "2. ALWAYS take schema of all tables using sql_db_schema and check schema of tables relevant to user query before writing any SQL.",
-    "3. Write SQL queries that relate ONLY to tables and columns that actually exist in the database.",
-    "4. Validate your SQL query using sql_db_query_checker before executing.",
-    "5. Execute the query with sql_db_query."
-    "",
-    "CRITICAL RULES:",
-    "- NEVER mention or use tables that don't exist in the database.",
-    "- ALWAYS use table names EXACTLY as they appear in sql_db_list_tables.",
-    "-ALWAYS use attributes names EXACTLY as they appear in sql_db_schema and they should be relevant to user query.",
-    "- Use ONLY column names that appear in the table schemas.",
-    "- NEVER make up column names or table names that don't exist.",
-    "- Unless the user specifies a specific number of examples, always LIMIT results to 5.",
-    "- Order results by a relevant column if possible to return the most interesting examples.",
-    "- Never SELECT * — only include relevant columns for the question.",
-    "- Do NOT make any DML statements (INSERT, UPDATE, DELETE, DROP, etc).",
-    "- If unsure about database functions or syntax, use get_db_capabilities to check what's supported.",
-    "",
-    "Visualization capabilities:",
-    "- in development,"
-    "",
-    "Error handling:",
-    "- If a table or column doesn't exist, clearly explain which ones are invalid.",
-    "- If a query fails, analyze the error and suggest corrections.",
-    "- If the user request is beyond the capability of the database, explain why and suggest alternatives.",
-    "",
-    f"Complete database context: {database_context}"
-]
-
-# --- 7. Initialize and run the AGNO Agent ---
-try:
-    agent = Agent(
-        model=Groq(id="llama-3.1-8b-instant", api_key=groq_api_key),
-        tools=tools,
-        instructions=instructions,
-        markdown=True,
-        show_tool_calls=True,
-        add_datetime_to_instructions=True,
-    )
-
-    if __name__ == "__main__":
-        try:
-            print("SQL Agent with Visualization started. Type 'exit' or 'quit' to end.")
-            print(f"Connected to database type: {engine.name}")
-            
-            while True:
-                question = input("Enter your question: ")
-                if question.lower() in ['exit', 'quit']:
-                    print("Exiting...")
-                    break
-                try:
-                    # Always refresh database context before answering
-                    build_database_context()
-                    
-                    # Update instructions with latest database context
-                    context_instructions = instructions.copy()
-                    context_instructions[-1] = f"Complete database context: {database_context}"
-
-                    # Re-initialize the Agent with the new context
-                    agent = Agent(
-                        model=Groq(id="llama-3.1-8b-instant", api_key=groq_api_key),
-                        tools=tools,
-                        instructions=context_instructions,
-                        markdown=True,
-                        show_tool_calls=True,
-                        add_datetime_to_instructions=True,
-                    )
-
-                    agent.print_response(question, stream=True)
-                except Exception as e:
-                    print(f"Error during agent response: {str(e)}")
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error in main loop: {str(e)}")
-            traceback.print_exc()
-except Exception as e:
-    print(f"Error initializing agent: {str(e)}")
-    traceback.print_exc()
+# Get the latest query results for visualization
+def get_latest_query_results():
+    return latest_query_result, latest_query_columns
