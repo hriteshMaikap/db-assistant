@@ -1,0 +1,855 @@
+# Database Test Queries for AI Platform Integration
+
+## SQL-Only Queries
+
+### Easy Level
+
+1. **Total Sales Per Category**
+   ```
+   Question: "Show me the total sales amount for each product category"
+   
+   Expected SQL Query:
+   SELECT p.category, SUM(o.total_amount) as total_sales
+   FROM orders o
+   JOIN order_items oi ON o.order_id = oi.order_id
+   JOIN products p ON oi.product_id = p.product_id
+   WHERE o.order_status = 'Delivered'
+   GROUP BY p.category
+   ORDER BY total_sales DESC;
+   ```
+
+2. **Monthly Average Order Value**
+   ```
+   Question: "What is the average order value by month for 2024?"
+   
+   Expected SQL Query:
+   SELECT 
+       strftime('%Y-%m', order_date) as month,
+       ROUND(AVG(total_amount), 2) as avg_order_value,
+       COUNT(*) as order_count
+   FROM orders 
+   WHERE strftime('%Y', order_date) = '2024'
+   GROUP BY strftime('%Y-%m', order_date)
+   ORDER BY month;
+   ```
+
+3. **Top 10 Customers by Total Spending**
+   ```
+   Question: "Who are the top 10 customers by total purchase amount?"
+   
+   Expected SQL Query:
+   SELECT 
+       c.first_name || ' ' || c.last_name as customer_name,
+       c.email,
+       SUM(o.total_amount) as total_spent,
+       COUNT(o.order_id) as total_orders
+   FROM customers c
+   JOIN orders o ON c.customer_id = o.customer_id
+   GROUP BY c.customer_id, c.first_name, c.last_name, c.email
+   ORDER BY total_spent DESC
+   LIMIT 10;
+   ```
+
+### Medium Level
+
+1. **Customer Retention Analysis**
+   ```
+   Question: "Show customer retention by analyzing repeat purchase behavior - customers with 1, 2-5, and 6+ orders"
+   
+   Expected SQL Query:
+   SELECT 
+       CASE 
+           WHEN order_count = 1 THEN 'One-time buyers'
+           WHEN order_count BETWEEN 2 AND 5 THEN 'Regular customers'
+           ELSE 'Loyal customers'
+       END as customer_segment,
+       COUNT(*) as customer_count,
+       ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM customers), 2) as percentage
+   FROM (
+       SELECT 
+           c.customer_id,
+           COUNT(o.order_id) as order_count
+       FROM customers c
+       LEFT JOIN orders o ON c.customer_id = o.customer_id
+       GROUP BY c.customer_id
+   ) customer_orders
+   GROUP BY customer_segment;
+   ```
+
+2. **Product Performance with Stock Analysis**
+   ```
+   Question: "Analyze product performance by showing total revenue, units sold, and current stock levels for products with low stock (less than 20 units)"
+   
+   Expected SQL Query:
+   SELECT 
+       p.product_name,
+       p.category,
+       p.stock_quantity,
+       SUM(oi.quantity) as units_sold,
+       SUM(oi.total_price) as total_revenue,
+       ROUND(p.rating, 1) as avg_rating
+   FROM products p
+   LEFT JOIN order_items oi ON p.product_id = oi.product_id
+   WHERE p.stock_quantity < 20
+   GROUP BY p.product_id, p.product_name, p.category, p.stock_quantity, p.rating
+   ORDER BY total_revenue DESC;
+   ```
+
+3. **Geographic Sales Distribution**
+   ```
+   Question: "Show sales performance by state including total orders, revenue, and average order value"
+   
+   Expected SQL Query:
+   SELECT 
+       o.shipping_state,
+       COUNT(o.order_id) as total_orders,
+       SUM(o.total_amount) as total_revenue,
+       ROUND(AVG(o.total_amount), 2) as avg_order_value,
+       COUNT(DISTINCT o.customer_id) as unique_customers
+   FROM orders o
+   WHERE o.order_status != 'Cancelled'
+   GROUP BY o.shipping_state
+   ORDER BY total_revenue DESC;
+   ```
+
+### Complex Level
+
+1. **Customer Lifetime Value with Cohort Analysis**
+   ```
+   Question: "Calculate customer lifetime value by registration cohort (month-year) and show retention patterns"
+   
+   Expected SQL Query:
+   WITH customer_cohorts AS (
+       SELECT 
+           customer_id,
+           strftime('%Y-%m', registration_date) as cohort_month,
+           registration_date
+       FROM customers
+   ),
+   customer_orders AS (
+       SELECT 
+           cc.customer_id,
+           cc.cohort_month,
+           SUM(o.total_amount) as total_spent,
+           COUNT(o.order_id) as total_orders,
+           MIN(o.order_date) as first_order_date,
+           MAX(o.order_date) as last_order_date
+       FROM customer_cohorts cc
+       LEFT JOIN orders o ON cc.customer_id = o.customer_id
+       GROUP BY cc.customer_id, cc.cohort_month
+   )
+   SELECT 
+       cohort_month,
+       COUNT(*) as cohort_size,
+       SUM(total_spent) as cohort_revenue,
+       ROUND(AVG(total_spent), 2) as avg_clv,
+       COUNT(CASE WHEN total_orders > 0 THEN 1 END) as active_customers,
+       ROUND(COUNT(CASE WHEN total_orders > 0 THEN 1 END) * 100.0 / COUNT(*), 2) as activation_rate
+   FROM customer_orders
+   GROUP BY cohort_month
+   ORDER BY cohort_month;
+   ```
+
+2. **Advanced Product Cross-sell Analysis**
+   ```
+   Question: "Find products frequently bought together (market basket analysis) with support and confidence metrics"
+   
+   Expected SQL Query:
+   WITH product_pairs AS (
+       SELECT 
+           oi1.product_id as product_a,
+           oi2.product_id as product_b,
+           COUNT(DISTINCT oi1.order_id) as co_occurrence
+       FROM order_items oi1
+       JOIN order_items oi2 ON oi1.order_id = oi2.order_id 
+           AND oi1.product_id < oi2.product_id
+       GROUP BY oi1.product_id, oi2.product_id
+       HAVING co_occurrence >= 3
+   ),
+   product_totals AS (
+       SELECT 
+           product_id,
+           COUNT(DISTINCT order_id) as total_orders
+       FROM order_items
+       GROUP BY product_id
+   )
+   SELECT 
+       p1.product_name as product_a_name,
+       p2.product_name as product_b_name,
+       pp.co_occurrence,
+       ROUND(pp.co_occurrence * 100.0 / pt1.total_orders, 2) as support_a,
+       ROUND(pp.co_occurrence * 100.0 / pt2.total_orders, 2) as support_b
+   FROM product_pairs pp
+   JOIN products p1 ON pp.product_a = p1.product_id
+   JOIN products p2 ON pp.product_b = p2.product_id
+   JOIN product_totals pt1 ON pp.product_a = pt1.product_id
+   JOIN product_totals pt2 ON pp.product_b = pt2.product_id
+   ORDER BY pp.co_occurrence DESC
+   LIMIT 20;
+   ```
+
+3. **Revenue Trend Analysis with Growth Metrics**
+   ```
+   Question: "Show monthly revenue trends with month-over-month growth rates and moving averages"
+   
+   Expected SQL Query:
+   WITH monthly_revenue AS (
+       SELECT 
+           strftime('%Y-%m', order_date) as month,
+           SUM(total_amount) as revenue,
+           COUNT(*) as order_count
+       FROM orders
+       WHERE order_status = 'Delivered'
+       GROUP BY strftime('%Y-%m', order_date)
+   ),
+   revenue_with_lag AS (
+       SELECT 
+           month,
+           revenue,
+           order_count,
+           LAG(revenue, 1) OVER (ORDER BY month) as prev_month_revenue,
+           AVG(revenue) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as moving_avg_3month
+       FROM monthly_revenue
+   )
+   SELECT 
+       month,
+       revenue,
+       order_count,
+       ROUND(moving_avg_3month, 2) as moving_avg_3month,
+       CASE 
+           WHEN prev_month_revenue IS NOT NULL THEN 
+               ROUND((revenue - prev_month_revenue) * 100.0 / prev_month_revenue, 2)
+           ELSE NULL 
+       END as mom_growth_rate
+   FROM revenue_with_lag
+   ORDER BY month;
+   ```
+
+---
+
+## MongoDB-Only Queries
+
+### Easy Level
+
+1. **Average Session Duration by Device Type**
+   ```
+   Question: "What is the average session duration for each device type?"
+   
+   Expected MongoDB Query:
+   db.user_sessions.aggregate([
+     {
+       $group: {
+         _id: "$device_type",
+         avg_duration: { $avg: "$session_duration_seconds" },
+         session_count: { $sum: 1 }
+       }
+     },
+     { $sort: { avg_duration: -1 } }
+   ])
+   ```
+
+2. **Top Traffic Sources**
+   ```
+   Question: "Show the distribution of traffic sources for user sessions"
+   
+   Expected MongoDB Query:
+   db.user_sessions.aggregate([
+     {
+       $group: {
+         _id: "$traffic_source",
+         session_count: { $sum: 1 },
+         conversion_rate: { 
+           $avg: { $cond: ["$converted_to_order", 1, 0] } 
+         }
+       }
+     },
+     { $sort: { session_count: -1 } }
+   ])
+   ```
+
+3. **Product Rating Distribution**
+   ```
+   Question: "Show the distribution of product ratings (1-5 stars)"
+   
+   Expected MongoDB Query:
+   db.product_reviews.aggregate([
+     {
+       $group: {
+         _id: "$rating",
+         count: { $sum: 1 },
+         avg_helpful_votes: { $avg: "$helpful_votes" }
+       }
+     },
+     { $sort: { _id: 1 } }
+   ])
+   ```
+
+### Medium Level
+
+1. **Campaign Performance Analysis**
+   ```
+   Question: "Analyze marketing campaign performance by type, showing ROI and conversion metrics"
+   
+   Expected MongoDB Query:
+   db.marketing_campaigns.aggregate([
+     {
+       $group: {
+         _id: "$campaign_type",
+         total_campaigns: { $sum: 1 },
+         total_budget: { $sum: "$budget.allocated" },
+         total_spent: { $sum: "$budget.spent" },
+         avg_ctr: { $avg: "$performance.ctr" },
+         avg_conversion_rate: { $avg: "$performance.conversion_rate" },
+         total_revenue: { $sum: "$revenue_generated" }
+       }
+     },
+     {
+       $addFields: {
+         roi: { 
+           $round: [
+             { $multiply: [
+               { $divide: ["$total_revenue", "$total_spent"] }, 
+               100
+             ]}, 2
+           ]
+         },
+         budget_utilization: {
+           $round: [
+             { $multiply: [
+               { $divide: ["$total_spent", "$total_budget"] }, 
+               100
+             ]}, 2
+           ]
+         }
+       }
+     },
+     { $sort: { roi: -1 } }
+   ])
+   ```
+
+2. **User Behavior Funnel Analysis**
+   ```
+   Question: "Analyze user behavior funnel from sessions to cart actions to conversions"
+   
+   Expected MongoDB Query:
+   db.user_sessions.aggregate([
+     {
+       $group: {
+         _id: null,
+         total_sessions: { $sum: 1 },
+         sessions_with_cart_activity: {
+           $sum: { $cond: [{ $gt: [{ $size: "$cart_actions" }, 0] }, 1, 0] }
+         },
+         converted_sessions: {
+           $sum: { $cond: ["$converted_to_order", 1, 0] }
+         },
+         avg_pages_viewed: { $avg: "$pages_viewed" },
+         bounce_sessions: { $sum: "$bounce_rate" }
+       }
+     },
+     {
+       $addFields: {
+         cart_engagement_rate: {
+           $round: [
+             { $multiply: [
+               { $divide: ["$sessions_with_cart_activity", "$total_sessions"] }, 
+               100
+             ]}, 2
+           ]
+         },
+         conversion_rate: {
+           $round: [
+             { $multiply: [
+               { $divide: ["$converted_sessions", "$total_sessions"] }, 
+               100
+             ]}, 2
+           ]
+         },
+         bounce_rate: {
+           $round: [
+             { $multiply: [
+               { $divide: ["$bounce_sessions", "$total_sessions"] }, 
+               100
+             ]}, 2
+           ]
+         }
+       }
+     }
+   ])
+   ```
+
+3. **Review Sentiment Analysis by Product Category**
+   ```
+   Question: "Analyze review sentiment distribution and helpfulness by product category (need to join with SQL product data conceptually)"
+   
+   Expected MongoDB Query:
+   db.product_reviews.aggregate([
+     {
+       $group: {
+         _id: {
+           sentiment: "$sentiment",
+           rating: "$rating"
+         },
+         review_count: { $sum: 1 },
+         avg_helpful_votes: { $avg: "$helpful_votes" },
+         verified_purchase_rate: {
+           $avg: { $cond: ["$verified_purchase", 1, 0] }
+         }
+       }
+     },
+     {
+       $group: {
+         _id: "$_id.sentiment",
+         rating_breakdown: {
+           $push: {
+             rating: "$_id.rating",
+             count: "$review_count",
+             avg_helpful_votes: "$avg_helpful_votes"
+           }
+         },
+         total_reviews: { $sum: "$review_count" },
+         avg_verified_rate: { $avg: "$verified_purchase_rate" }
+       }
+     },
+     { $sort: { total_reviews: -1 } }
+   ])
+   ```
+
+### Complex Level
+
+1. **Advanced User Journey Mapping**
+   ```
+   Question: "Map complete user journeys including page sequences, time spent, and conversion paths"
+   
+   Expected MongoDB Query:
+   db.user_sessions.aggregate([
+     { $match: { "page_views.2": { $exists: true } } }, // Sessions with 3+ page views
+     {
+       $addFields: {
+         journey_path: {
+           $reduce: {
+             input: { $slice: ["$page_views.page_type", 5] }, // First 5 pages
+             initialValue: "",
+             in: { $concat: ["$$value", { $cond: [{ $eq: ["$$value", ""] }, "", " → "] }, "$$this"] }
+           }
+         },
+         total_time_on_pages: { $sum: "$page_views.time_spent" }
+       }
+     },
+     {
+       $group: {
+         _id: "$journey_path",
+         frequency: { $sum: 1 },
+         avg_session_duration: { $avg: "$session_duration_seconds" },
+         avg_time_on_pages: { $avg: "$total_time_on_pages" },
+         conversion_rate: { $avg: { $cond: ["$converted_to_order", 1, 0] } },
+         devices: { $addToSet: "$device_type" }
+       }
+     },
+     { $match: { frequency: { $gte: 3 } } }, // Paths taken by 3+ users
+     { $sort: { conversion_rate: -1, frequency: -1 } },
+     { $limit: 20 }
+   ])
+   ```
+
+2. **Marketing Attribution Modeling**
+   ```
+   Question: "Build marketing attribution model showing campaign influence on customer journey stages"
+   
+   Expected MongoDB Query:
+   db.marketing_campaigns.aggregate([
+     {
+       $addFields: {
+         campaign_efficiency: {
+           $cond: [
+             { $gt: ["$performance.conversions", 0] },
+             { $divide: ["$revenue_generated", "$budget.spent"] },
+             0
+           ]
+         },
+         audience_reach_score: {
+           $multiply: [
+             "$performance.impressions", 
+             { $divide: ["$performance.ctr", 100] }
+           ]
+         }
+       }
+     },
+     {
+       $group: {
+         _id: {
+           objective: "$objective",
+           campaign_type: "$campaign_type"
+         },
+         campaigns_count: { $sum: 1 },
+         total_investment: { $sum: "$budget.spent" },
+         total_revenue: { $sum: "$revenue_generated" },
+         avg_efficiency: { $avg: "$campaign_efficiency" },
+         total_conversions: { $sum: "$performance.conversions" },
+         avg_reach_score: { $avg: "$audience_reach_score" },
+         best_performing_campaign: {
+           $max: {
+             name: "$campaign_name",
+             roi: "$campaign_efficiency"
+           }
+         }
+       }
+     },
+     {
+       $addFields: {
+         overall_roi: { 
+           $round: [
+             { $multiply: [
+               { $divide: ["$total_revenue", "$total_investment"] }, 
+               100
+             ]}, 2
+           ]
+         },
+         cost_per_acquisition: {
+           $round: [
+             { $divide: ["$total_investment", "$total_conversions"] }, 2
+           ]
+         }
+       }
+     },
+     { $sort: { overall_roi: -1 } }
+   ])
+   ```
+
+3. **Predictive Engagement Scoring**
+   ```
+   Question: "Create engagement scores based on session behavior patterns to predict conversion likelihood"
+   
+   Expected MongoDB Query:
+   db.user_sessions.aggregate([
+     {
+       $addFields: {
+         engagement_score: {
+           $add: [
+             // Page depth score (0-30 points)
+             { $min: [{ $multiply: ["$pages_viewed", 3] }, 30] },
+             // Session duration score (0-25 points)  
+             { $min: [{ $divide: ["$session_duration_seconds", 72] }, 25] },
+             // Cart activity score (0-20 points)
+             { $cond: [{ $gt: [{ $size: "$cart_actions" }, 0] }, 20, 0] },
+             // Traffic source quality score (0-15 points)
+             { $switch: {
+               branches: [
+                 { case: { $eq: ["$traffic_source", "Direct"] }, then: 15 },
+                 { case: { $eq: ["$traffic_source", "Google Search"] }, then: 12 },
+                 { case: { $eq: ["$traffic_source", "Email"] }, then: 10 },
+                 { case: { $in: ["$traffic_source", ["Facebook", "Instagram"]] }, then: 8 }
+               ],
+               default: 5
+             }},
+             // Device score (0-10 points)
+             { $cond: [{ $eq: ["$device_type", "Desktop"] }, 10, 
+               { $cond: [{ $eq: ["$device_type", "Mobile"] }, 7, 5] }
+             ]}
+           ]
+         }
+       }
+     },
+     {
+       $addFields: {
+         engagement_tier: {
+           $switch: {
+             branches: [
+               { case: { $gte: ["$engagement_score", 80] }, then: "High" },
+               { case: { $gte: ["$engagement_score", 50] }, then: "Medium" },
+               { case: { $gte: ["$engagement_score", 25] }, then: "Low" }
+             ],
+             default: "Very Low"
+           }
+         }
+       }
+     },
+     {
+       $group: {
+         _id: "$engagement_tier",
+         session_count: { $sum: 1 },
+         avg_engagement_score: { $avg: "$engagement_score" },
+         conversion_rate: { 
+           $avg: { $cond: ["$converted_to_order", 1, 0] } 
+         },
+         avg_pages_viewed: { $avg: "$pages_viewed" },
+         avg_session_duration: { $avg: "$session_duration_seconds" }
+       }
+     },
+     { $sort: { avg_engagement_score: -1 } }
+   ])
+   ```
+
+---
+
+## Combined SQL + MongoDB Queries
+
+### Easy Level
+
+1. **Customer Purchase vs. Review Activity**
+   ```
+   Question: "Show customers who have made purchases but haven't left any reviews"
+   
+   Approach: First get customer purchase data from SQL, then check review activity in MongoDB
+   
+   SQL Query:
+   SELECT DISTINCT c.customer_id, c.first_name, c.last_name, c.email,
+          COUNT(o.order_id) as total_orders,
+          SUM(o.total_amount) as total_spent
+   FROM customers c
+   JOIN orders o ON c.customer_id = o.customer_id
+   WHERE o.order_status = 'Delivered'
+   GROUP BY c.customer_id, c.first_name, c.last_name, c.email;
+   
+   MongoDB Query (for each customer_id from SQL result):
+   db.product_reviews.countDocuments({ customer_id: <customer_id> })
+   ```
+
+2. **Product Sales vs. Review Ratings Correlation**
+   ```
+   Question: "Compare product sales performance with their average review ratings"
+   
+   SQL Query (get sales data):
+   SELECT p.product_id, p.product_name, p.category,
+          SUM(oi.quantity) as units_sold,
+          SUM(oi.total_price) as total_revenue
+   FROM products p
+   JOIN order_items oi ON p.product_id = oi.product_id
+   JOIN orders o ON oi.order_id = o.order_id
+   WHERE o.order_status = 'Delivered'
+   GROUP BY p.product_id, p.product_name, p.category;
+   
+   MongoDB Query (get review data):
+   db.product_reviews.aggregate([
+     {
+       $group: {
+         _id: "$product_id",
+         avg_rating: { $avg: "$rating" },
+         review_count: { $sum: 1 },
+         avg_helpful_votes: { $avg: "$helpful_votes" }
+       }
+     }
+   ])
+   ```
+
+3. **Session Activity vs. Actual Orders**
+   ```
+   Question: "Match user sessions that converted with their actual order data"
+   
+   MongoDB Query (converted sessions):
+   db.user_sessions.find(
+     { converted_to_order: true, customer_id: { $ne: null } },
+     { customer_id: 1, session_start: 1, session_duration_seconds: 1, cart_actions: 1 }
+   )
+   
+   SQL Query (for matching orders):
+   SELECT o.customer_id, o.order_date, o.total_amount, o.order_status,
+          COUNT(oi.item_id) as items_count
+   FROM orders o
+   JOIN order_items oi ON o.order_id = oi.order_id
+   WHERE o.customer_id IN (<customer_ids_from_mongodb>)
+   AND DATE(o.order_date) = DATE(<session_start_date>)
+   GROUP BY o.order_id;
+   ```
+
+### Medium Level
+
+1. **Customer Segmentation with Behavioral Data**
+   ```
+   Question: "Create customer segments based on purchase history (SQL) and website behavior (MongoDB)"
+   
+   SQL Query (purchase behavior):
+   SELECT c.customer_id,
+          COUNT(o.order_id) as order_frequency,
+          AVG(o.total_amount) as avg_order_value,
+          SUM(o.total_amount) as total_spent,
+          MAX(o.order_date) as last_order_date
+   FROM customers c
+   LEFT JOIN orders o ON c.customer_id = o.customer_id
+   GROUP BY c.customer_id;
+   
+   MongoDB Query (web behavior):
+   db.user_sessions.aggregate([
+     { $match: { customer_id: { $ne: null } } },
+     {
+       $group: {
+         _id: "$customer_id",
+         avg_session_duration: { $avg: "$session_duration_seconds" },
+         total_sessions: { $sum: 1 },
+         avg_pages_per_session: { $avg: "$pages_viewed" },
+         cart_engagement_rate: {
+           $avg: { $cond: [{ $gt: [{ $size: "$cart_actions" }, 0] }, 1, 0] }
+         },
+         preferred_device: { $first: "$device_type" } // Most recent
+       }
+     }
+   ])
+   
+   Combined Analysis:
+   - High Value + High Engagement = VIP Customers
+   - High Value + Low Engagement = At Risk
+   - Low Value + High Engagement = Growth Potential
+   - Low Value + Low Engagement = Need Attention
+   ```
+
+2. **Marketing Campaign Effectiveness vs. Actual Sales**
+   ```
+   Question: "Measure marketing campaign performance against actual sales during campaign periods"
+   
+   MongoDB Query (campaign periods and performance):
+   db.marketing_campaigns.find(
+     { status: { $in: ["Active", "Completed"] } },
+     { 
+       campaign_name: 1, start_date: 1, end_date: 1, 
+       "performance.conversions": 1, budget: 1, attributed_orders: 1 
+     }
+   )
+   
+   SQL Query (sales during campaign periods):
+   SELECT 
+       DATE(o.order_date) as order_date,
+       COUNT(o.order_id) as daily_orders,
+       SUM(o.total_amount) as daily_revenue,
+       AVG(o.total_amount) as avg_order_value
+   FROM orders o
+   WHERE o.order_date BETWEEN '<campaign_start>' AND '<campaign_end>'
+   AND o.order_status != 'Cancelled'
+   GROUP BY DATE(o.order_date)
+   ORDER BY order_date;
+   
+   Analysis: Compare campaign attributed orders vs. actual order spikes
+   ```
+
+3. **Product Performance Multi-dimensional Analysis**
+   ```
+   Question: "Analyze product performance combining sales data, review sentiment, and marketing campaign targeting"
+   
+   SQL Query (sales performance):
+   SELECT p.product_id, p.product_name, p.category,
+          SUM(oi.quantity) as units_sold,
+          SUM(oi.total_price) as revenue,
+          COUNT(DISTINCT oi.order_id) as order_count
+   FROM products p
+   JOIN order_items oi ON p.product_id = oi.product_id
+   JOIN orders o ON oi.order_id = o.order_id
+   WHERE o.order_status = 'Delivered'
+   GROUP BY p.product_id;
+   
+   MongoDB Query (review sentiment):
+   db.product_reviews.aggregate([
+     {
+       $group: {
+         _id: "$product_id",
+         avg_rating: { $avg: "$rating" },
+         sentiment_breakdown: {
+           $push: { 
+             sentiment: "$sentiment", 
+             count: 1 
+           }
+         },
+         total_reviews: { $sum: 1 }
+       }
+     }
+   ])
+   
+   MongoDB Query (campaign targeting):
+   db.marketing_campaigns.aggregate([
+     { $unwind: "$targeting.interests" },
+     {
+       $group: {
+         _id: "$targeting.interests",
+         campaigns_count: { $sum: 1 },
+         total_budget: { $sum: "$budget.spent" },
+         avg_performance: { $avg: "$performance.conversion_rate" }
+       }
+     }
+   ])
+   ```
+
+### Complex Level
+
+1. **Customer Lifetime Value Prediction Model**
+   ```
+   Question: "Build CLV prediction using historical purchase data, behavioral patterns, and engagement metrics"
+   
+   SQL Query (purchase history and patterns):
+   WITH customer_metrics AS (
+     SELECT 
+       c.customer_id,
+       c.registration_date,
+       COUNT(o.order_id) as total_orders,
+       SUM(o.total_amount) as total_spent,
+       AVG(o.total_amount) as avg_order_value,
+       MIN(o.order_date) as first_order_date,
+       MAX(o.order_date) as last_order_date,
+       AVG(JULIANDAY(o.order_date) - JULIANDAY(LAG(o.order_date) OVER (PARTITION BY c.customer_id ORDER BY o.order_date))) as avg_days_between_orders
+     FROM customers c
+     LEFT JOIN orders o ON c.customer_id = o.customer_id
+     GROUP BY c.customer_id, c.registration_date
+   )
+   SELECT *,
+          CASE 
+            WHEN last_order_date IS NULL THEN 0
+            ELSE (JULIANDAY('now') - JULIANDAY(last_order_date))
+          END as days_since_last_order,
+          total_spent / NULLIF(total_orders, 0) as actual_aov
+   FROM customer_metrics;
+   
+   MongoDB Query (behavioral engagement):
+   db.user_sessions.aggregate([
+     { $match: { customer_id: { $ne: null } } },
+     {
+       $group: {
+         _id: "$customer_id",
+         total_sessions: { $sum: 1 },
+         avg_session_duration: { $avg: "$session_duration_seconds" },
+         total_page_views: { $sum: "$pages_viewed" },
+         cart_abandonment_rate: {
+           $avg: {
+             $cond: [
+               { $and: [
+                 { $gt: [{ $size: "$cart_actions" }, 0] },
+                 { $eq: ["$converted_to_order", false] }
+               ]},
+               1, 0
+             ]
+           }
+         },
+         device_preference: { $addToSet: "$device_type" },
+         traffic_sources: { $addToSet: "$traffic_source" },
+         engagement_score: {
+           $avg: {
+             $add: [
+               { $multiply: ["$pages_viewed", 2] },
+               { $divide: ["$session_duration_seconds", 60] },
+               { $multiply: [{ $size: "$cart_actions" }, 5] }
+             ]
+           }
+         }
+       }
+     }
+   ])
+   
+   Combined Analysis:
+   - Recency: Days since last order
+   - Frequency: Orders per time period  
+   - Monetary: Average order value
+   - Engagement: Web behavior score
+   - Predicted CLV = (AOV × Purchase Frequency × Engagement Factor × Retention Probability)
+   ```
+
+2. **Omnichannel Customer Journey Analysis**
+   ```
+   Question: "Map complete customer journeys from first website visit through purchase and post-purchase behavior"
+   
+   MongoDB Query (journey touchpoints):
+   db.user_sessions.aggregate([
+     { $match: { customer_id: { $ne: null } } },
+     { $sort: { customer_id: 1, session_start: 1 } },
+     {
+       $group: {
+         _id: "$customer_id",
+         journey_touchpoints: {
+           $push: {
+             timestamp: "$session_start",
+             touch

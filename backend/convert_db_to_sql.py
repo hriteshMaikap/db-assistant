@@ -6,12 +6,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Config
-SQLITE_PATH = "C:\\Users\\hrite\\OneDrive\\Documents\\db-assistant\\backend\\ecommerce_test.db"
+SQLITE_PATH = "C:\\Users\\hrite\\OneDrive\\Documents\\db-assistant\\backend\\ecommerce_platform.db"
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASS = os.getenv("MYSQL_PASS", "hritesh12345")
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
-TARGET_DB   = "ecommerce_test"
+TARGET_DB   = "ecommerce_platform"
 
 # Engines
 src_engine = create_engine(f"sqlite:///{SQLITE_PATH}")
